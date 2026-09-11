@@ -66,8 +66,18 @@ def parse_reagent_qr_data(qr_payload_str):
         else:
             data = json.loads(qr_payload_str)
 
-        reagent_type = data.get("reagent", "").upper()
-        lot_number = data.get("lot", "UNTRACKED")
+        if not isinstance(data, dict):
+            return {
+                "is_valid": False,
+                "is_expired": False,
+                "reagent_type": "INVALID",
+                "lot_number": "N/A",
+                "expiry_date": "N/A",
+                "error": "Invalid QR code payload: expected JSON object."
+            }
+
+        reagent_type = str(data.get("reagent", "")).upper()
+        lot_number = str(data.get("lot", "UNTRACKED"))
         exp_str = data.get("exp", "")
 
         if reagent_type not in VALIDATED_REAGENT_LIBRARY:
@@ -80,22 +90,36 @@ def parse_reagent_qr_data(qr_payload_str):
                 "error": f"Unrecognized reagent type '{reagent_type}'."
             }
 
-        is_expired = False
-        if exp_str:
-            try:
-                exp_date = datetime.strptime(exp_str, "%Y-%m-%d").replace(tzinfo=timezone.utc)
-                now_utc = datetime.now(timezone.utc)
-                if now_utc > exp_date:
-                    is_expired = True
-            except ValueError:
-                pass
+        if not exp_str:
+            return {
+                "is_valid": False,
+                "is_expired": False,
+                "reagent_type": reagent_type,
+                "lot_number": lot_number,
+                "expiry_date": "N/A",
+                "error": "Missing expiry date in reagent QR code."
+            }
+
+        try:
+            exp_date = datetime.strptime(str(exp_str).strip(), "%Y-%m-%d").date()
+            now_date = datetime.now(timezone.utc).date()
+            is_expired = now_date > exp_date
+        except (ValueError, TypeError):
+            return {
+                "is_valid": False,
+                "is_expired": False,
+                "reagent_type": reagent_type,
+                "lot_number": lot_number,
+                "expiry_date": exp_str,
+                "error": f"Invalid expiry date format '{exp_str}'. Expected YYYY-MM-DD."
+            }
 
         return {
             "is_valid": True,
             "is_expired": is_expired,
             "reagent_type": reagent_type,
             "lot_number": lot_number,
-            "expiry_date": exp_str,
+            "expiry_date": str(exp_str),
             "reagent_info": VALIDATED_REAGENT_LIBRARY[reagent_type],
             "error": "EXPIRED REAGENT KIT! Do not use for court evidence." if is_expired else None
         }

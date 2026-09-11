@@ -46,19 +46,19 @@ def create_synthetic_test_image(
     pouch_overlay = card_img[py:py+ph, px:px+pw].copy()
     cv2.rectangle(pouch_overlay, (20, 20), (pw-20, ph-20), (220, 220, 220), -1)
 
-    # Determine BGR color for simulation
+    # Determine BGR color for simulation (calibrated to certified NIJ CIELAB targets)
     if not is_positive:
         liquid_bgr = (210, 210, 210) # Clear / colorless liquid
     elif reagent_type == "SCOTT_REAGENT":
-        liquid_bgr = (180, 40, 20)   # Deep Cobalt Blue (BGR format)
+        liquid_bgr = (124, 79, 0)    # Cobalt Blue (Target Lab 30, 2, -52)
     elif reagent_type == "MARQUIS_OPIATE":
-        liquid_bgr = (110, 15, 80)   # Deep Violet
+        liquid_bgr = (95, 33, 78)    # Deep Violet (Target Lab 22, 32, -28)
     elif reagent_type == "MARQUIS_AMPHETAMINE":
-        liquid_bgr = (20, 90, 200)   # Orange-Brown
+        liquid_bgr = (42, 70, 177)   # Orange-Brown (Target Lab 44, 42, 38)
     elif reagent_type == "DUQUENOIS_LEVINE" or is_multi_phase:
-        liquid_bgr = (130, 20, 60)   # Indigo-Violet
+        liquid_bgr = (106, 46, 66)   # Indigo-Violet Organic Phase (Target Lab 24, 24, -32)
     else:
-        liquid_bgr = (180, 40, 20)
+        liquid_bgr = (124, 79, 0)
 
     # Fill reaction liquid
     if is_multi_phase:

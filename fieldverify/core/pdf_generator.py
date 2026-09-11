@@ -90,19 +90,49 @@ def generate_evidentiary_pdf(cert, output_pdf_path=None):
     elements.append(Paragraph("(Issued in compliance with Section 63 of the Bharatiya Sakshya Adhiniyam, 2023)", subtitle_style))
     elements.append(Spacer(1, 10))
 
+    if not isinstance(cert, dict):
+        cert = {}
+
+    test_id = str(cert.get("test_id") or "N/A")
+    raw_timestamp = cert.get("timestamp_utc")
+    timestamp_str = str(raw_timestamp)[:19] if raw_timestamp else "N/A"
+    officer_id = str(cert.get("officer_badge_id") or "N/A")
+    fir_ref = str(cert.get("fir_case_ref") or "N/A")
+    loc_name = str(cert.get("location_name") or "N/A")
+
+    # Safe GPS
+    raw_gps = cert.get("gps")
+    lat, lon = 0.0, 0.0
+    if isinstance(raw_gps, dict):
+        try:
+            lat = float(raw_gps.get("lat", 0.0))
+            lon = float(raw_gps.get("lon", 0.0))
+        except (ValueError, TypeError):
+            pass
+    elif isinstance(raw_gps, (tuple, list)) and len(raw_gps) >= 2:
+        try:
+            lat = float(raw_gps[0])
+            lon = float(raw_gps[1])
+        except (ValueError, TypeError):
+            pass
+
+    lat_cardinal = "N" if lat >= 0 else "S"
+    lon_cardinal = "E" if lon >= 0 else "W"
+    gps_str = f"{abs(lat):.4f}° {lat_cardinal}, {abs(lon):.4f}° {lon_cardinal}"
+
     # 2. General Metadata Table
     gen_data = [
         [
-            Paragraph("<b>Test Certificate ID:</b> " + cert.get("test_id", "N/A"), body_style),
-            Paragraph("<b>Date & UTC Time:</b> " + cert.get("timestamp_utc", "N/A")[:19], body_style)
+            Paragraph(f"<b>Test Certificate ID:</b> {test_id}", body_style),
+            Paragraph(f"<b>Date & UTC Time:</b> {timestamp_str}", body_style)
         ],
         [
-            Paragraph("<b>Seizing Officer ID:</b> " + cert.get("officer_badge_id", "N/A"), body_style),
-            Paragraph("<b>FIR / Case Reference:</b> " + cert.get("fir_case_ref", "N/A"), body_style)
+            Paragraph(f"<b>Seizing Officer ID:</b> {officer_id}", body_style),
+            Paragraph(f"<b>FIR / Case Reference:</b> {fir_ref}", body_style)
         ],
         [
-            Paragraph("<b>Inspection Location:</b> " + cert.get("location_name", "N/A"), body_style),
-            Paragraph("<b>GPS Coordinates:</b> " + f"{cert.get('gps', {}).get('lat', 0.0):.4f}° N, {cert.get('gps', {}).get('lon', 0.0):.4f}° E", body_style)
+            Paragraph(f"<b>Inspection Location:</b> {loc_name}", body_style),
+            Paragraph(f"<b>GPS Coordinates:</b> {gps_str}", body_style)
         ]
     ]
 
@@ -118,23 +148,50 @@ def generate_evidentiary_pdf(cert, output_pdf_path=None):
     elements.append(Spacer(1, 8))
 
     # 3. Chemical Reagent & Analysis Table
-    lab = cert.get("measured_lab", {})
-    outcome = cert.get("outcome", "INCONCLUSIVE")
+    reagent_type = str(cert.get("reagent_type") or "N/A")
+    batch_lot = str(cert.get("batch_lot") or "N/A")
+
+    # Safe Lab
+    raw_lab = cert.get("measured_lab")
+    L_val, a_val, b_val = 0.0, 0.0, 0.0
+    if isinstance(raw_lab, dict):
+        try:
+            L_val = float(raw_lab.get("L", 0.0))
+            a_val = float(raw_lab.get("a", 0.0))
+            b_val = float(raw_lab.get("b", 0.0))
+        except (ValueError, TypeError):
+            pass
+    elif isinstance(raw_lab, (tuple, list)) and len(raw_lab) >= 3:
+        try:
+            L_val = float(raw_lab[0])
+            a_val = float(raw_lab[1])
+            b_val = float(raw_lab[2])
+        except (ValueError, TypeError):
+            pass
+
+    try:
+        delta_e = float(cert.get("delta_e00", cert.get("delta_e", 0.0)))
+        delta_e_str = f"{delta_e:.2f}"
+    except (ValueError, TypeError):
+        delta_e_str = "0.00"
+
+    anti_spoof = str(cert.get("anti_spoof_status") or "PASS")
+    outcome = str(cert.get("outcome") or "INCONCLUSIVE")
 
     outcome_bg = colors.HexColor('#DCFCE7') if outcome == "POSITIVE" else (colors.HexColor('#FEE2E2') if outcome == "NEGATIVE" else colors.HexColor('#FEF3C7'))
     outcome_text_color = colors.HexColor('#166534') if outcome == "POSITIVE" else (colors.HexColor('#991B1B') if outcome == "NEGATIVE" else colors.HexColor('#92400E'))
 
     chem_data = [
         [
-            Paragraph("<b>Reagent Applied:</b> " + cert.get("reagent_type", "N/A"), body_style),
-            Paragraph("<b>Reagent Lot / Batch:</b> " + cert.get("batch_lot", "N/A"), body_style)
+            Paragraph(f"<b>Reagent Applied:</b> {reagent_type}", body_style),
+            Paragraph(f"<b>Reagent Lot / Batch:</b> {batch_lot}", body_style)
         ],
         [
-            Paragraph(f"<b>Measured CIELAB:</b> L*={lab.get('L', 0):.1f}, a*={lab.get('a', 0):.1f}, b*={lab.get('b', 0):.1f}", body_style),
-            Paragraph(f"<b>CIEDE2000 Color Distance:</b> ΔE00 = {cert.get('delta_e00', 0.0):.2f}", body_style)
+            Paragraph(f"<b>Measured CIELAB:</b> L*={L_val:.1f}, a*={a_val:.1f}, b*={b_val:.1f}", body_style),
+            Paragraph(f"<b>CIEDE2000 Color Distance:</b> ΔE00 = {delta_e_str}", body_style)
         ],
         [
-            Paragraph("<b>Anti-Spoofing Status:</b> " + cert.get("anti_spoof_status", "PASS"), body_style),
+            Paragraph(f"<b>Anti-Spoofing Status:</b> {anti_spoof}", body_style),
             Paragraph(f"<b>SCREENING OUTCOME:</b> <font color='{outcome_text_color.hexval()}'><b>{outcome}</b></font>", body_style)
         ]
     ]
@@ -155,10 +212,15 @@ def generate_evidentiary_pdf(cert, output_pdf_path=None):
     elements.append(Paragraph("DIGITAL CHAIN OF CUSTODY (CRYPTOGRAPHIC HASHES & ECDSA SIGNATURE)", section_header_style))
     elements.append(Spacer(1, 3))
 
+    raw_hash = str(cert.get("sha256_raw_image") or "N/A")
+    roi_hash = str(cert.get("sha256_calibrated_roi") or "N/A")
+    raw_sig = str(cert.get("ecdsa_signature_hex") or cert.get("digital_signature") or "N/A")
+    sig_preview = (raw_sig[:80] + "...") if len(raw_sig) > 80 else raw_sig
+
     hash_data = [
-        [Paragraph("<b>Raw Frame SHA-256 Digest:</b>", body_style), Paragraph(cert.get("sha256_raw_image", "N/A"), code_style)],
-        [Paragraph("<b>Calibrated ROI SHA-256 Digest:</b>", body_style), Paragraph(cert.get("sha256_calibrated_roi", "N/A"), code_style)],
-        [Paragraph("<b>ECDSA P-256 Signature (Hex):</b>", body_style), Paragraph(cert.get("ecdsa_signature_hex", "N/A")[:80] + "...", code_style)]
+        [Paragraph("<b>Raw Frame SHA-256 Digest:</b>", body_style), Paragraph(raw_hash, code_style)],
+        [Paragraph("<b>Calibrated ROI SHA-256 Digest:</b>", body_style), Paragraph(roi_hash, code_style)],
+        [Paragraph("<b>ECDSA P-256 Signature (Hex):</b>", body_style), Paragraph(sig_preview, code_style)]
     ]
 
     t_hash = Table(hash_data, colWidths=[2.2 * inch, 5.3 * inch])
@@ -173,7 +235,9 @@ def generate_evidentiary_pdf(cert, output_pdf_path=None):
     elements.append(Spacer(1, 10))
 
     # 5. Dynamic QR Code & Verification Block
-    qr_payload = f"FIELDVERIFY|ID:{cert.get('test_id')}|OUT:{outcome}|RAW:{cert.get('sha256_raw_image')[:16]}|SIG:{cert.get('ecdsa_signature_hex')[:16]}"
+    qr_raw_sub = raw_hash[:16] if raw_hash != "N/A" else "0000000000000000"
+    qr_sig_sub = raw_sig[:16] if raw_sig != "N/A" else "0000000000000000"
+    qr_payload = f"FIELDVERIFY|ID:{test_id}|OUT:{outcome}|RAW:{qr_raw_sub}|SIG:{qr_sig_sub}"
     qr_img = qrcode.make(qr_payload)
 
     qr_buffer = io.BytesIO()

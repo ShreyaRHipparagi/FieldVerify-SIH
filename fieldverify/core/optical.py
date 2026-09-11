@@ -38,23 +38,27 @@ def ciede2000(lab1, lab2):
     h1_p = math.degrees(math.atan2(b1, a1_p)) % 360
     h2_p = math.degrees(math.atan2(b2, a2_p)) % 360
 
-    if abs(h1_p - h2_p) <= 180:
-        avg_h_p = (h1_p + h2_p) / 2.0
+    if C1_p * C2_p == 0.0:
+        avg_h_p = h1_p + h2_p
+        delta_h_p = 0.0
     else:
-        avg_h_p = (h1_p + h2_p + 360) / 2.0 if (h1_p + h2_p) < 360 else (h1_p + h2_p - 360) / 2.0
+        if abs(h1_p - h2_p) <= 180:
+            avg_h_p = (h1_p + h2_p) / 2.0
+        else:
+            avg_h_p = (h1_p + h2_p + 360) / 2.0 if (h1_p + h2_p) < 360 else (h1_p + h2_p - 360) / 2.0
+
+        delta_h_p = h2_p - h1_p
+        if abs(delta_h_p) > 180:
+            delta_h_p += 360 if h2_p <= h1_p else -360
 
     T = (1.0 - 0.17 * math.cos(math.radians(avg_h_p - 30))
            + 0.24 * math.cos(math.radians(2 * avg_h_p))
            + 0.32 * math.cos(math.radians(3 * avg_h_p + 6))
            - 0.20 * math.cos(math.radians(4 * avg_h_p - 63)))
 
-    delta_h_p = h2_p - h1_p
-    if abs(delta_h_p) > 180:
-        delta_h_p += 360 if h2_p <= h1_p else -360
-
     delta_L_p = L2 - L1
     delta_C_p = C2_p - C1_p
-    delta_H_p = 2.0 * math.sqrt(C1_p * C2_p + 1e-9) * math.sin(math.radians(delta_h_p / 2.0))
+    delta_H_p = 2.0 * math.sqrt(C1_p * C2_p) * math.sin(math.radians(delta_h_p / 2.0))
 
     S_L = 1.0 + ((0.015 * ((avg_L - 50.0)**2)) / math.sqrt(20.0 + ((avg_L - 50.0)**2)))
     S_C = 1.0 + 0.045 * avg_C_p
@@ -77,7 +81,7 @@ def srgb_to_lab(bgr_color):
     """
     Converts a BGR float/int tuple [B, G, R] to CIE L*a*b* using D65 reference white.
     """
-    b, g, r = [float(x) / 255.0 for x in bgr_color]
+    b, g, r = [float(np.clip(x, 0.0, 255.0)) / 255.0 for x in bgr_color]
 
     # Linearize sRGB channels
     def linearize(c):
@@ -96,7 +100,8 @@ def srgb_to_lab(bgr_color):
     Z /= 1.08883
 
     def f(t):
-        return t ** (1.0 / 3.0) if t > 0.008856 else (7.787037 * t) + (16.0 / 116.0)
+        t_clamped = max(0.0, t)
+        return (t_clamped ** (1.0 / 3.0)) if t_clamped > 0.008856 else (7.787037 * t_clamped) + (16.0 / 116.0)
 
     fx, fy, fz = f(X), f(Y), f(Z)
     L = (116.0 * fy) - 16.0
@@ -112,7 +117,10 @@ def detect_screen_spoofing(image_bgr):
     to determine if the photo was taken off a digital phone/laptop screen.
     Returns: (is_spoof: bool, score: float, reason: str)
     """
-    gray = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2GRAY)
+    if image_bgr is None or not hasattr(image_bgr, "shape") or image_bgr.size == 0:
+        raise ValueError("Invalid image input for screen spoofing analysis.")
+
+    gray = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2GRAY) if len(image_bgr.shape) == 3 else image_bgr.copy()
     h, w = gray.shape
 
     # 1. Laplacian Variance Blur/Grid Test
@@ -154,18 +162,24 @@ def check_ambient_lighting(image_bgr, rectified_card=None):
         dict with status ('OPTIMAL', 'TOO_DARK', 'TOO_BRIGHT'),
         estimated_lux, message, and recommendation.
     """
-    if rectified_card is not None:
+    if image_bgr is None or not hasattr(image_bgr, "shape") or image_bgr.size == 0:
+        raise ValueError("Invalid image input for ambient lighting check.")
+
+    if rectified_card is not None and hasattr(rectified_card, "shape") and rectified_card.size > 0:
         # Sample the 18% Neutral Gray swatch on the rectified card: x=250, y=450, w=80, h=80
         gx, gy, gw, gh = 250, 450, 80, 80
-        gray_patch = rectified_card[gy:gy+gh, gx:gx+gw]
-        b = np.mean(gray_patch[:, :, 0])
-        g = np.mean(gray_patch[:, :, 1])
-        r = np.mean(gray_patch[:, :, 2])
-        # Photopic luminance Y = 0.2126 R + 0.7152 G + 0.0722 B
-        lum = 0.2126 * r + 0.7152 * g + 0.0722 * b
+        if rectified_card.shape[0] >= gy + gh and rectified_card.shape[1] >= gx + gw:
+            gray_patch = rectified_card[gy:gy+gh, gx:gx+gw]
+            b = np.mean(gray_patch[:, :, 0])
+            g = np.mean(gray_patch[:, :, 1])
+            r = np.mean(gray_patch[:, :, 2])
+            lum = 0.2126 * r + 0.7152 * g + 0.0722 * b
+        else:
+            gray = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2GRAY) if len(image_bgr.shape) == 3 else image_bgr
+            lum = float(np.mean(gray))
     else:
         # Overall image luminance
-        gray = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2GRAY)
+        gray = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2GRAY) if len(image_bgr.shape) == 3 else image_bgr
         lum = float(np.mean(gray))
 
     # Calibrated empirical lux mapping from 8-bit luminance
@@ -227,11 +241,13 @@ def rectify_reference_card(image_bgr, target_w=1000, target_h=600):
         marker_centers[3]
     ], dtype=np.float32)
 
+    scale_x = float(target_w) / 1000.0
+    scale_y = float(target_h) / 600.0
     dst_pts = np.array([
-        [0, 0],
-        [target_w, 0],
-        [target_w, target_h],
-        [0, target_h]
+        [70.0 * scale_x, 70.0 * scale_y],
+        [930.0 * scale_x, 70.0 * scale_y],
+        [930.0 * scale_x, 530.0 * scale_y],
+        [70.0 * scale_x, 530.0 * scale_y]
     ], dtype=np.float32)
 
     H = cv2.getPerspectiveTransform(src_pts, dst_pts)
@@ -247,6 +263,9 @@ def calibrate_and_extract_color(rectified_img, is_multi_phase=False):
     3. Multi-phase liquid separation boundary extraction (if required, e.g. Duquenois-Levine).
     4. sRGB to CIELAB conversion of extracted valid pixels.
     """
+    if rectified_img is None or not hasattr(rectified_img, "shape") or rectified_img.size == 0:
+        raise ValueError("Invalid rectified image provided for optical calibration.")
+
     target_w, target_h = 1000, 600
 
     # Card ROI Layout:
@@ -278,10 +297,11 @@ def calibrate_and_extract_color(rectified_img, is_multi_phase=False):
     calibrated_pouch = calibrated_pouch.astype(np.uint8)
 
     # 3. Specular Glare Masking (HSV space)
+    # Specular reflection is characterized by both high intensity (brightness) and washed-out desaturation
     hsv = cv2.cvtColor(calibrated_pouch, cv2.COLOR_BGR2HSV)
     v_channel = hsv[:, :, 2]
     s_channel = hsv[:, :, 1]
-    glare_mask = (v_channel >= 235) | (s_channel < 30)
+    glare_mask = (v_channel >= 235) & (s_channel < 40)
     valid_mask = ~glare_mask
 
     total_pixels = pw * ph
@@ -295,15 +315,25 @@ def calibrate_and_extract_color(rectified_img, is_multi_phase=False):
     phase_boundary_y = None
     if is_multi_phase:
         # Duquenois-Levine test separates into top aqueous layer and bottom chloroform layer.
-        # We compute vertical color gradient down the valid rows of the pouch.
-        row_b_means = [np.mean(calibrated_pouch[r, valid_mask[r, :], 0]) if np.any(valid_mask[r, :]) else 0 for r in range(ph)]
-        row_gradients = np.abs(np.diff(row_b_means))
-        if len(row_gradients) > 0:
-            phase_boundary_y = int(np.argmax(row_gradients)) + 1
+        # We compute vertical color gradient across valid rows in the liquid reaction zone.
+        row_b_means = [
+            float(np.mean(calibrated_pouch[r, valid_mask[r, :], 0])) if np.sum(valid_mask[r, :]) > 10 else np.nan
+            for r in range(ph)
+        ]
+        inner_start = int(ph * 0.15)
+        inner_end = int(ph * 0.85)
+        inner_gradients = [
+            abs(row_b_means[r+1] - row_b_means[r])
+            if not np.isnan(row_b_means[r+1]) and not np.isnan(row_b_means[r])
+            else 0.0
+            for r in range(inner_start, inner_end)
+        ]
+        if len(inner_gradients) > 0 and max(inner_gradients) > 0:
+            phase_boundary_y = inner_start + int(np.argmax(inner_gradients)) + 1
             # For Duquenois-Levine, the lower phase is the bottom organic layer (y from phase_boundary_y to ph)
             lower_phase_mask = np.zeros_like(valid_mask)
             lower_phase_mask[phase_boundary_y:, :] = valid_mask[phase_boundary_y:, :]
-            if np.sum(lower_phase_mask) > 50:
+            if np.sum(lower_phase_mask) >= 50:
                 valid_mask = lower_phase_mask
 
     valid_pixels = calibrated_pouch[valid_mask]

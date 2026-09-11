@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fieldverify"
+version = "1.0.0"
+description = "FieldVerify AI - Forensic Field Drug Testing Companion"
+authors = [{ name = "FieldVerify Engineering Team" }]
+requires-python = ">=3.9"
+dependencies = [
+    "streamlit>=1.28.0",
+    "opencv-python>=4.8.0",
+    "numpy>=1.24.0",
+    "cryptography>=41.0.0",
+    "reportlab>=4.0.0",
+    "qrcode>=7.4.0",
+    "pandas>=2.0.0",
+    "pillow>=10.0.0"
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
