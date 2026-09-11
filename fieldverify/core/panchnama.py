@@ -68,7 +68,7 @@ def generate_ndps_panchnama_text(data):
 Police Station / Unit       : {data.get('police_station') or 'Narcotics Control Bureau / CID'}
 Case / FIR Reference Number : {data.get('fir_case_ref') or 'N/A'}
 Date & Time of Seizure      : {now_str}
-Place of Seizure            : {data.get('seizure_location') or 'Highway Checkpost'}
+Place of Seizure            : {data.get('seizure_location') or data.get('location_name') or 'Highway Checkpost'}
 GPS Coordinates             : {gps_str}
 Digital FieldVerify ID      : {test_id}
 

@@ -79,6 +79,11 @@ from fieldverify.utils.geo import (
     reverse_geocode,
     generate_regional_corridors
 )
+from fieldverify.utils.barcode import (
+    scan_barcode_or_qr_from_image,
+    generate_barcode_qr_image,
+    validate_evidence_bag_barcode
+)
 
 # Page Configuration
 st.set_page_config(
@@ -830,7 +835,34 @@ with st.sidebar:
         st.caption(f"📍 Active Coordinates: `{lat:.4f}° N, {lon:.4f}° E`")
 
     with st.expander(T.get("evidence_title", "🏷️ Physical Evidence Custody"), expanded=True):
-        evidence_bag_barcode = st.text_input(T["evidence_barcode"], value="BAG-NCB-2026-9912")
+        col_bar_in, col_bar_btn = st.columns([3, 1])
+        with col_bar_in:
+            evidence_bag_barcode = st.text_input(
+                T["evidence_barcode"],
+                value=st.session_state.get("evidence_bag_barcode", "BAG-NCB-2026-9912"),
+                key="input_evidence_barcode"
+            )
+            st.session_state["evidence_bag_barcode"] = evidence_bag_barcode
+        with col_bar_btn:
+            barcode_scan_pop = st.popover("📷 Scan", use_container_width=True)
+            with barcode_scan_pop:
+                st.markdown("**Scan Evidence Bag Barcode**")
+                barcode_file = st.file_uploader("Upload Barcode/QR Photo", type=["png", "jpg", "jpeg"], key="upload_evidence_barcode")
+                if barcode_file is not None:
+                    try:
+                        file_bytes = np.asarray(bytearray(barcode_file.read()), dtype=np.uint8)
+                        b_img = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
+                        scan_res = scan_barcode_or_qr_from_image(b_img)
+                        if scan_res["found"]:
+                            st.session_state["evidence_bag_barcode"] = scan_res["text"]
+                            st.session_state["input_evidence_barcode"] = scan_res["text"]
+                            st.success(f"✅ Barcode Detected: `{scan_res['text']}`")
+                            st.rerun()
+                        else:
+                            st.warning("⚠️ No barcode/QR detected in image.")
+                    except Exception as ex:
+                        st.error(f"Scan error: {ex}")
+
         sample_weight = st.number_input(T["sample_weight"], value=250.0, step=5.0)
 
         col_w1, col_w2 = st.columns(2)
@@ -849,9 +881,25 @@ with st.sidebar:
         is_expired_kit = False
 
         if is_qr_mode:
+            qr_sub_mode = st.radio("QR Mode", ["Text Payload", "Upload QR Photo"], horizontal=True, label_visibility="collapsed")
+            if qr_sub_mode == "Upload QR Photo":
+                reagent_qr_file = st.file_uploader("Upload Reagent Box QR Photo", type=["png", "jpg", "jpeg"], key="upload_reagent_qr")
+                if reagent_qr_file is not None:
+                    try:
+                        file_bytes = np.asarray(bytearray(reagent_qr_file.read()), dtype=np.uint8)
+                        r_img = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
+                        scan_res = scan_barcode_or_qr_from_image(r_img)
+                        if scan_res["found"]:
+                            st.session_state["reagent_qr_payload"] = scan_res["text"]
+                            st.success("✅ Reagent QR Payload Detected!")
+                        else:
+                            st.warning("⚠️ No QR code detected in image.")
+                    except Exception as ex:
+                        st.error(f"Scan error: {ex}")
+
             qr_json_str = st.text_area(
                 T.get("qr_payload", "Reagent QR Code Data Payload"),
-                value='{"reagent": "SCOTT_REAGENT", "lot": "SC-2026-0819", "exp": "2027-12-31"}',
+                value=st.session_state.get("reagent_qr_payload", '{"reagent": "SCOTT_REAGENT", "lot": "SC-2026-0819", "exp": "2027-12-31"}'),
                 height=70
             )
             parsed_qr = parse_reagent_qr_data(qr_json_str)
@@ -1804,38 +1852,118 @@ with tab5:
 # TAB 6: SEARCHABLE POLICE AUDIT LEDGER
 # -----------------------------------------------------------------------------
 with tab6:
-    st.subheader(T.get("ledger_title", "📜 Local Encrypted Audit Ledger"))
-    st.caption(T.get("ledger_caption", "Immutable SQLite database record of all roadside presumptive drug screenings."))
+    st.subheader(T.get("ledger_title", "📜 Local Encrypted Audit Ledger & Chain of Custody"))
+    st.caption(T.get("ledger_caption", "Immutable SQLite database record of all roadside presumptive drug screenings and evidence bag custody."))
 
-    col_f1, col_f2, col_f3 = st.columns([1, 1, 2])
+    col_f1, col_f2, col_f3, col_f4 = st.columns([1, 1, 1, 2])
     with col_f1:
         result_filter = st.selectbox(T.get("ledger_filter", "Filter Outcome"), ["ALL", "POSITIVE", "NEGATIVE", "INCONCLUSIVE", "SCREEN_SPOOF_ALERT"])
     with col_f2:
-        officer_filter = st.text_input(T.get("ledger_officer", "Filter Officer ID"), value="")
+        officer_filter = st.text_input(T.get("ledger_officer", "Filter Officer ID / Name"), value="")
     with col_f3:
-        search_kw = st.text_input(T.get("ledger_search", "Search Keyword (ID, FIR, Reagent, Lot, Barcode)"), value="")
+        barcode_filter = st.text_input("🏷️ Evidence Barcode", value="", placeholder="e.g. BAG-NCB-2026")
+    with col_f4:
+        search_kw = st.text_input(T.get("ledger_search", "Search Keyword (ID, FIR, Reagent, Lot, Location)"), value="")
 
-    records = search_test_records(officer_id=officer_filter, result_filter=result_filter, search_query=search_kw)
+    records = search_test_records(
+        officer_id=officer_filter,
+        result_filter=result_filter,
+        search_query=search_kw,
+        barcode=barcode_filter
+    )
 
     if records:
-        st.dataframe(records, use_container_width=True)
+        st.markdown(f"**Found `{len(records)}` record(s) matching search criteria:**")
+
+        table_rows = []
+        for r in records:
+            table_rows.append({
+                "Test ID": r["id"],
+                "Date/Time (UTC)": str(r.get("timestamp_utc", ""))[:19].replace("T", " "),
+                "Evidence Bag Barcode": r.get("evidence_bag_barcode") or "N/A",
+                "Reagent": r.get("reagent_type") or "N/A",
+                "Result": r.get("result") or "N/A",
+                "ΔE00": f"{float(r.get('delta_e', 0.0)):.2f}",
+                "Weight (g)": f"{float(r.get('estimated_weight_g', 0.0) or 0.0):.1f}",
+                "Location": r.get("location_name") or "N/A",
+                "Officer": f"{r.get('officer_name', '')} ({r.get('officer_id', '')})",
+                "FSL Lab Status": r.get("fsl_status") or "PENDING_LAB"
+            })
+        df_records = pd.DataFrame(table_rows)
+        st.dataframe(df_records, use_container_width=True, hide_index=True)
 
         st.markdown("---")
         st.subheader(T.get("ledger_audit", "🔐 Court Evidence Audit & Tamper Verification Tool"))
-        selected_record_id = st.selectbox("Select Test Record to Audit", options=[r["id"] for r in records])
+        st.caption("Cryptographic integrity audit under Section 63 Bharatiya Sakshya Adhiniyam (BSA), 2023.")
 
-        if selected_record_id:
-            rec = next((r for r in records if r["id"] == selected_record_id), None)
+        record_options = [f"{r['id']} | Bag: {r.get('evidence_bag_barcode', 'N/A')} | {r['reagent_type']} ({r['result']})" for r in records]
+        selected_record_entry = st.selectbox("Select Test Record to Audit", options=record_options)
+
+        if selected_record_entry:
+            sel_id = selected_record_entry.split(" | ")[0]
+            rec = next((r for r in records if r["id"] == sel_id), None)
             if rec:
-                try:
-                    cert_obj = json.loads(rec["certificate_json"])
-                    is_valid, msg = verify_evidentiary_certificate(cert_obj)
-                    if is_valid:
-                        st.success(f"✅ {msg}")
-                    else:
-                        st.error(f"❌ {msg}")
-                except Exception as ex:
-                    st.error("❌ Could not verify this certificate. The record may be corrupted or tampered with.")
+                col_aud1, col_aud2 = st.columns([2, 1])
+
+                with col_aud1:
+                    try:
+                        cert_obj = json.loads(rec["certificate_json"])
+                        is_valid, msg = verify_evidentiary_certificate(cert_obj)
+                        if is_valid:
+                            st.success(f"✅ **Cryptographic Seal Verified**: {msg}")
+                        else:
+                            st.error(f"❌ **TAMPER ALERT**: {msg}")
+                    except Exception as ex:
+                        st.error("❌ Could not verify certificate. The record payload may be corrupted or altered.")
+                        cert_obj = {}
+
+                    st.markdown("#### 📋 Seizure & Evidentiary Metadata")
+                    meta_col1, meta_col2 = st.columns(2)
+                    with meta_col1:
+                        st.write(f"**Test ID:** `{rec['id']}`")
+                        st.write(f"**FIR / Case Ref:** `{rec.get('fir_case_ref', 'N/A')}`")
+                        st.write(f"**Evidence Bag Barcode:** `{rec.get('evidence_bag_barcode', 'N/A')}`")
+                        st.write(f"**Seized Weight:** `{rec.get('estimated_weight_g', 0.0)} g`")
+                        st.write(f"**Reagent & Lot:** `{rec.get('reagent_type')} (Lot: {rec.get('batch_lot')})`")
+                    with meta_col2:
+                        st.write(f"**Investigating Officer:** `{rec.get('officer_name')} ({rec.get('officer_id')})`")
+                        st.write(f"**Location:** `{rec.get('location_name', 'N/A')}`")
+                        st.write(f"**GPS Coordinates:** `{rec.get('latitude', 0.0):.4f}° N, {rec.get('longitude', 0.0):.4f}° E`")
+                        st.write(f"**Ambient Lux:** `{rec.get('ambient_lux', 450.0):.1f} Lux`")
+                        st.write(f"**FSL Lab Status:** `{rec.get('fsl_status', 'PENDING_LAB')}`")
+
+                    st.markdown("#### 🔒 SHA-256 Hashes & Digital Signature")
+                    st.code(f"Raw Image SHA-256 : {rec.get('raw_image_hash', 'N/A')}\nCalibrated ROI Hash: {rec.get('roi_image_hash', 'N/A')}\nECDSA P-256 Sig    : {rec.get('digital_signature', 'N/A')}", language="text")
+
+                with col_aud2:
+                    st.markdown("#### 🏷️ Evidence Bag Seal Barcode")
+                    bag_code = rec.get("evidence_bag_barcode") or "BAG-NCB-2026-9912"
+                    barcode_qr_img = generate_barcode_qr_image(bag_code, box_size=5)
+                    st.image(cv2.cvtColor(barcode_qr_img, cv2.COLOR_BGR2RGB), caption=f"Evidence Seal: {bag_code}", width=180)
+
+                    st.markdown("#### 📥 Export Court Evidence")
+                    # Download Digital Certificate JSON
+                    st.download_button(
+                        "📥 Download Certificate (.json)",
+                        data=rec["certificate_json"],
+                        file_name=f"Certificate_{rec['id']}.json",
+                        mime="application/json",
+                        use_container_width=True
+                    )
+
+                    # Generate & Download PDF
+                    try:
+                        if cert_obj:
+                            pdf_data = generate_evidentiary_pdf(cert_obj)
+                            st.download_button(
+                                "📄 Download Court Affidavit (.pdf)",
+                                data=pdf_data,
+                                file_name=f"Court_Affidavit_{rec['id']}.pdf",
+                                mime="application/pdf",
+                                use_container_width=True
+                            )
+                    except Exception as p_err:
+                        st.caption(f"PDF generator notice: {p_err}")
     else:
         st.warning(T.get("ledger_empty", "No test records found matching the query filters."))
 

@@ -216,8 +216,8 @@ def save_test_record(cert, raw_img_path="", roi_img_path="", db_path=DB_FILE_PAT
         conn.close()
 
 
-def search_test_records(officer_id=None, result_filter=None, search_query=None, limit=100, db_path=DB_FILE_PATH):
-    """Searches test records by officer, outcome, or keyword."""
+def search_test_records(officer_id=None, result_filter=None, search_query=None, barcode=None, limit=100, db_path=DB_FILE_PATH):
+    """Searches test records by officer, outcome, keyword, or evidence bag barcode."""
     abs_path = os.path.abspath(db_path)
     if abs_path not in _INITIALIZED_DBS:
         init_db(db_path)
@@ -228,17 +228,22 @@ def search_test_records(officer_id=None, result_filter=None, search_query=None, 
         params = []
 
         if officer_id and str(officer_id).strip():
-            query += " AND officer_id LIKE ?"
-            params.append(f"%{str(officer_id).strip()}%")
+            query += " AND (officer_id LIKE ? OR officer_name LIKE ?)"
+            off_term = f"%{str(officer_id).strip()}%"
+            params.extend([off_term, off_term])
 
         if result_filter and result_filter != "ALL":
             query += " AND result = ?"
             params.append(result_filter)
 
+        if barcode and str(barcode).strip():
+            query += " AND evidence_bag_barcode LIKE ?"
+            params.append(f"%{str(barcode).strip()}%")
+
         if search_query and str(search_query).strip():
-            query += " AND (id LIKE ? OR fir_case_ref LIKE ? OR reagent_type LIKE ? OR batch_lot LIKE ? OR evidence_bag_barcode LIKE ?)"
+            query += " AND (id LIKE ? OR fir_case_ref LIKE ? OR reagent_type LIKE ? OR batch_lot LIKE ? OR evidence_bag_barcode LIKE ? OR location_name LIKE ? OR officer_name LIKE ? OR officer_id LIKE ?)"
             term = f"%{str(search_query).strip()}%"
-            params.extend([term, term, term, term, term])
+            params.extend([term, term, term, term, term, term, term, term])
 
         query += " ORDER BY timestamp_utc DESC LIMIT ?"
         params.append(limit)
